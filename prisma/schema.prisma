@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// User model for simple auth if needed, or just admin
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   // Hashed password
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Publisher {
+  id              String          @id @default(cuid())
+  name            String          @unique // Nombres deben ser unicos para las sugerencias
+  birthDate       DateTime
+  gender          String          // "MASCULINO", "FEMENINO"
+  baptismDate     DateTime?       // Null se no es bautizado
+  
+  // Relations
+  reports         MonthlyReport[]
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model MonthlyReport {
+  id              String    @id @default(cuid())
+  
+  // Link to static identity
+  publisherId     String
+  publisher       Publisher @relation(fields: [publisherId], references: [id], onDelete: Cascade)
+
+  // Time period
+  year            Int
+  month           Int
+
+  // Status Snapshot (These can change over time)
+  isBaptized      Boolean   @default(false)
+  hope            String?   // "OTRAS OVEJAS", "UNGIDO", null
+  privilege       String    // "PUBLICADOR", "SIERVO_MINISTERIAL", "ANCIANO", "MISIONERO"
+  group           String?   // "LAS CASCADAS", "LAS HADAS", etc.
+
+  // Activity Stats
+  participated    Boolean   @default(false) // "participo en el ministerio"
+  bibleStudies    Int?      @default(0)
+  isPrecursor     Boolean   @default(false) // "si participo como precursor"
+  hours           Float     @default(0)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([publisherId, year, month]) // Un reporte por publicador por mes
+  @@index([year, month])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  action      String   // "DELETE_REPORT", "CHANGE_PRIVILEGE", "CHANGE_BAPTISM"
+  details     String?
+  timestamp   DateTime @default(now())
+  user        String?  // Quien lo hizo (si tenemos auth)
+}
