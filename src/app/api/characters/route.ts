@@ -73,51 +73,102 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error fetching characters:', error);
     return NextResponse.json(
-      { error: 'Error fetching characters' },
+      { error: 'Error fetching characters', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
+  // Step-by-step logging for debugging Vercel issues
+  let step = 'init';
 
+  try {
+    step = 'parsing_body';
+    const body = await request.json();
+    console.log('[POST /api/characters] Request body received:', JSON.stringify(body, null, 2));
+
+    step = 'validating_required_fields';
     if (!body.nombre || !body.fechaNacimiento) {
+      console.log('[POST /api/characters] Validation failed: missing nombre or fechaNacimiento');
       return NextResponse.json(
-        { error: 'Name and BirthDate are required' },
+        { error: 'Name and BirthDate are required', step },
         { status: 400 }
       );
     }
 
     // 1. Find or Create Publisher
-    // We use "upsert" logic manually because we might update static info
+    step = 'finding_publisher';
+    console.log(`[POST /api/characters] Looking for publisher: "${body.nombre}"`);
+
     let publisher = await db.publisher.findUnique({
       where: { name: body.nombre }
     });
 
+    console.log(`[POST /api/characters] Publisher found:`, publisher ? `ID: ${publisher.id}` : 'null');
+
     if (!publisher) {
-      publisher = await db.publisher.create({
-        data: {
-          name: body.nombre,
-          birthDate: new Date(body.fechaNacimiento),
-          gender: body.genero || 'MASCULINO',
-          baptismDate: body.categoria3 ? new Date(body.categoria3) : null,
-        }
+      step = 'creating_publisher';
+      console.log(`[POST /api/characters] Creating new publisher with data:`, {
+        name: body.nombre,
+        birthDate: body.fechaNacimiento,
+        gender: body.genero || 'MASCULINO',
+        baptismDate: body.categoria3 || null
       });
+
+      try {
+        publisher = await db.publisher.create({
+          data: {
+            name: body.nombre,
+            birthDate: new Date(body.fechaNacimiento),
+            gender: body.genero || 'MASCULINO',
+            baptismDate: body.categoria3 ? new Date(body.categoria3) : null,
+          }
+        });
+        console.log(`[POST /api/characters] Publisher created successfully: ID ${publisher.id}`);
+      } catch (createError) {
+        console.error('[POST /api/characters] Error creating publisher:', createError);
+        return NextResponse.json(
+          {
+            error: 'Error creating publisher',
+            step,
+            details: createError instanceof Error ? createError.message : String(createError),
+            stack: createError instanceof Error ? createError.stack : undefined
+          },
+          { status: 500 }
+        );
+      }
     } else {
       // Optional: Update static info if changed (User might have corrected a birthdate)
-      publisher = await db.publisher.update({
-        where: { id: publisher.id },
-        data: {
-          birthDate: new Date(body.fechaNacimiento),
-          gender: body.genero,
-          baptismDate: body.categoria3 ? new Date(body.categoria3) : publisher.baptismDate,
-        }
-      });
+      step = 'updating_publisher';
+      console.log(`[POST /api/characters] Updating existing publisher: ID ${publisher.id}`);
+
+      try {
+        publisher = await db.publisher.update({
+          where: { id: publisher.id },
+          data: {
+            birthDate: new Date(body.fechaNacimiento),
+            gender: body.genero,
+            baptismDate: body.categoria3 ? new Date(body.categoria3) : publisher.baptismDate,
+          }
+        });
+        console.log(`[POST /api/characters] Publisher updated successfully`);
+      } catch (updateError) {
+        console.error('[POST /api/characters] Error updating publisher:', updateError);
+        return NextResponse.json(
+          {
+            error: 'Error updating publisher',
+            step,
+            details: updateError instanceof Error ? updateError.message : String(updateError),
+            stack: updateError instanceof Error ? updateError.stack : undefined
+          },
+          { status: 500 }
+        );
+      }
     }
 
     // 2. Map incoming categories to new schema Enums/Values
+    step = 'mapping_categories';
     const isBaptized = body.categoria2 === 'SI';
     const hope = body.categoria7 === 'OPCION7.1' ? 'OTRAS OVEJAS' :
       body.categoria7 === 'OPCION7.2' ? 'UNGIDO' : null;
@@ -135,10 +186,9 @@ export async function POST(request: NextRequest) {
     const bibleStudies = body.categoria10 ? parseInt(body.categoria10) : 0;
 
     // 3. Upsert Monthly Report
-    // We search for a report for this publisher+year+month
-    const startOfMonth = new Date(body.year, body.month - 1, 1);
+    step = 'finding_report';
+    console.log(`[POST /api/characters] Looking for existing report: publisherId=${publisher.id}, year=${body.year}, month=${body.month}`);
 
-    // Check if report exists
     const existingReport = await db.monthlyReport.findFirst({
       where: {
         publisherId: publisher.id,
@@ -147,44 +197,100 @@ export async function POST(request: NextRequest) {
       }
     });
 
+    console.log(`[POST /api/characters] Existing report:`, existingReport ? `ID: ${existingReport.id}` : 'null');
+
     let report;
     if (existingReport) {
-      report = await db.monthlyReport.update({
-        where: { id: existingReport.id },
-        data: {
-          isBaptized,
-          hope,
-          privilege,
-          group,
-          participated,
-          bibleStudies,
-          isPrecursor,
-          hours
-        }
-      });
+      step = 'updating_report';
+      console.log(`[POST /api/characters] Updating existing report: ID ${existingReport.id}`);
+
+      try {
+        report = await db.monthlyReport.update({
+          where: { id: existingReport.id },
+          data: {
+            isBaptized,
+            hope,
+            privilege,
+            group,
+            participated,
+            bibleStudies,
+            isPrecursor,
+            hours
+          }
+        });
+        console.log(`[POST /api/characters] Report updated successfully`);
+      } catch (updateReportError) {
+        console.error('[POST /api/characters] Error updating report:', updateReportError);
+        return NextResponse.json(
+          {
+            error: 'Error updating monthly report',
+            step,
+            details: updateReportError instanceof Error ? updateReportError.message : String(updateReportError),
+            stack: updateReportError instanceof Error ? updateReportError.stack : undefined
+          },
+          { status: 500 }
+        );
+      }
     } else {
-      report = await db.monthlyReport.create({
-        data: {
-          publisherId: publisher.id,
-          year: parseInt(body.year),
-          month: parseInt(body.month),
-          isBaptized,
-          hope,
-          privilege,
-          group,
-          participated,
-          bibleStudies,
-          isPrecursor,
-          hours
-        }
+      step = 'creating_report';
+      console.log(`[POST /api/characters] Creating new report with data:`, {
+        publisherId: publisher.id,
+        year: parseInt(body.year),
+        month: parseInt(body.month),
+        isBaptized,
+        hope,
+        privilege,
+        group,
+        participated,
+        bibleStudies,
+        isPrecursor,
+        hours
       });
+
+      try {
+        report = await db.monthlyReport.create({
+          data: {
+            publisherId: publisher.id,
+            year: parseInt(body.year),
+            month: parseInt(body.month),
+            isBaptized,
+            hope,
+            privilege,
+            group,
+            participated,
+            bibleStudies,
+            isPrecursor,
+            hours
+          }
+        });
+        console.log(`[POST /api/characters] Report created successfully: ID ${report.id}`);
+      } catch (createReportError) {
+        console.error('[POST /api/characters] Error creating report:', createReportError);
+        return NextResponse.json(
+          {
+            error: 'Error creating monthly report',
+            step,
+            details: createReportError instanceof Error ? createReportError.message : String(createReportError),
+            stack: createReportError instanceof Error ? createReportError.stack : undefined
+          },
+          { status: 500 }
+        );
+      }
     }
 
+    step = 'complete';
+    console.log(`[POST /api/characters] Request completed successfully`);
     return NextResponse.json(report, { status: 201 });
   } catch (error) {
-    console.error('Error creating character:', error);
+    console.error(`[POST /api/characters] Unexpected error at step "${step}":`, error);
     return NextResponse.json(
-      { error: 'Error creating character' },
+      {
+        error: 'Error creating character',
+        step,
+        details: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        errorType: error?.constructor?.name || 'Unknown'
+      },
       { status: 500 }
     );
   }

@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 
+// FIX: In Next.js 15, params is now a Promise and must be awaited
 export async function GET(
   request: NextRequest,
-  { params }: { params: { nombre: string } }
+  { params }: { params: Promise<{ nombre: string }> }
 ) {
   try {
-    const { nombre } = params;
+    // Await the params Promise to get the actual values
+    const { nombre } = await params;
     const searchParams = request.nextUrl.searchParams;
     const year = searchParams.get('year');
+
+    console.log(`[GET /api/characters/summary/${nombre}] Fetching summary for year: ${year}`);
 
     if (!year) {
       return NextResponse.json(
@@ -53,6 +57,8 @@ export async function GET(
       nombre: char.publisher.name
     }));
 
+    console.log(`[GET /api/characters/summary/${nombre}] Found ${characters.length} records, total hours: ${total}`);
+
     return NextResponse.json({
       data: mappedCharacters,
       total
@@ -60,7 +66,11 @@ export async function GET(
   } catch (error) {
     console.error('Error fetching character summary:', error);
     return NextResponse.json(
-      { error: 'Error fetching character summary' },
+      {
+        error: 'Error fetching character summary',
+        details: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      },
       { status: 500 }
     );
   }
